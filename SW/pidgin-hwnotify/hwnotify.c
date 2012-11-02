@@ -25,6 +25,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <ftdi.h>
+
 #include "notify.h"
 #include "plugin.h"
 #include "version.h"
@@ -38,88 +40,164 @@
 #include "gtkblist.h"
 
 
-void led_set(gboolean state) {
-	const char *filename=purple_prefs_get_string(
-	                                 "/plugins/gtk/gtk-simom-lednot/filename");
-	FILE *file=NULL;
+typedef enum {
+    LED_NONE,
+    LED_RED,
+    LED_GREEN,
+    LED_BLUE
+} led_color;
 
-	file=fopen(filename, "w");
-	if(file==NULL) {
-		purple_debug_error("Led-notification",
-		                 "Error opening file '%s'\n",filename);
-		return;
-	}
 
-	if(state) {
-		fputs("1", file);
-	} else {
-		fputs("0", file);
-	}
+led_color color_unread = LED_NONE;
+led_color color_important = LED_NONE;
 
-	fclose(file);
+
+gboolean ftdi_ok = FALSE;
+struct ftdi_context ctx;
+
+
+led_color str2color (const char* str)
+{
+    if (str == NULL)
+        return LED_NONE;
+    if (strcmp (str, "none") == 0)
+        return LED_NONE;
+    if (strcmp (str, "red") == 0)
+        return LED_RED;
+    if (strcmp (str, "green") == 0)
+        return LED_GREEN;
+    if (strcmp (str, "blue") == 0)
+        return LED_BLUE;
+    return LED_NONE;
 }
 
-GList *get_pending_list(guint max) {
-	const char *im=purple_prefs_get_string("/plugins/gtk/gtk-simom-lednot/im");
-	const char *chat=purple_prefs_get_string(
-	                                     "/plugins/gtk/gtk-simom-lednot/chat");
+
+unsigned char get_led_state ()
+{
+    unsigned char buf;
+
+    ftdi_read_data (&ctx, &buf, 1);
+
+    return buf;
+}
+
+
+void set_led_state (unsigned char state)
+{
+    ftdi_write_data (&ctx, &state, 1);   
+}
+
+
+unsigned char set_led (unsigned char buf, led_color color, gboolean state)
+{
+    int bit = -1;
+
+    if (!ftdi_ok || color == LED_NONE)
+        return buf;
+
+    switch (color) {
+    case LED_NONE:
+        bit = -1;
+        break;
+    case LED_RED:
+        bit = 0;
+        break;
+    case LED_GREEN:
+        bit = 5;
+        break;
+    case LED_BLUE:
+        bit = 6;
+        break;
+    }
+
+    if (bit < 0)
+        return buf;
+
+    if (state)
+        buf |= (1 << bit);
+    else
+        buf &= ~(1 << bit);
+
+    return buf;
+}
+
+
+void get_pending_events(gboolean* unread, gboolean* important) {
+	const char *im=purple_prefs_get_string("/plugins/gtk/ftdi-hwnotify/im");
+	const char *chat=purple_prefs_get_string("/plugins/gtk/ftdi-hwnotify/chat");
 	GList *l_im = NULL;
 	GList *l_chat = NULL;
 
+        *unread = FALSE;
+        *important = FALSE;
 	
 	if (im != NULL && strcmp(im, "always") == 0) {
 		l_im = pidgin_conversations_find_unseen_list(PURPLE_CONV_TYPE_IM,
 		                                             PIDGIN_UNSEEN_TEXT,
-		                                             FALSE, max);
+		                                             FALSE, 1);
 	} else if (im != NULL && strcmp(im, "hidden") == 0) {
 		l_im = pidgin_conversations_find_unseen_list(PURPLE_CONV_TYPE_IM,
 		                                             PIDGIN_UNSEEN_TEXT,
-		                                             TRUE, max);
+		                                             TRUE, 1);
 	}
 
+        // check for important contacts: TODO
+        if (l_im != NULL) {
+            GList* p = l_im;
+
+            while (p != NULL) {
+                PurpleConversation* conv = (PurpleConversation*)p->data;
+                purple_debug_info ("hwnotify", "acc: %s\n", conv->account->username);
+                p = p->next;
+            }
+        }
+
+        // check for chat
 	if (chat != NULL && strcmp(chat, "always") == 0) {
 		l_chat = pidgin_conversations_find_unseen_list(PURPLE_CONV_TYPE_CHAT,
 		                                               PIDGIN_UNSEEN_TEXT,
-		                                               FALSE, max);
+		                                               FALSE, 1);
 	} else if (chat != NULL && strcmp(chat, "nick") == 0) {
 		l_chat = pidgin_conversations_find_unseen_list(PURPLE_CONV_TYPE_CHAT,
 		                                               PIDGIN_UNSEEN_NICK,
-		                                               FALSE, max);
+		                                               FALSE, 1);
 	}
 
-	if (l_im != NULL && l_chat != NULL)
-		return g_list_concat(l_im, l_chat);
-	else if (l_im != NULL)
-		return l_im;
-	else
-		return l_chat;
+        if (l_im != NULL || l_chat != NULL)
+            *unread = TRUE;
+
+        if (l_im != NULL)
+            g_list_free (l_im);
+
+        if (l_chat != NULL)
+            g_list_free (l_chat);
 }
 
-static void lednot_conversation_updated(PurpleConversation *conv, 
-                                        PurpleConvUpdateType type) {
-	GList *list;
 
+static void hwnotify_conversation_updated(PurpleConversation *conv, 
+                                          PurpleConvUpdateType type) {
 	if( type != PURPLE_CONV_UPDATE_UNSEEN ) {
 		return;
 	}
 
-#if 0
-	purple_debug_info("Led-notification", "Change in unseen conversations\n");
-#endif
+        gboolean unread, important;
 
-	list=get_pending_list(1);
+	get_pending_events (&unread, &important);
 
-	if(list==NULL) {
-		led_set(FALSE);
-	} else if(list!=NULL) {
-		led_set(TRUE);
-	}
-	g_list_free(list);
+        purple_debug_info ("hwnotify", "pending_events (%d, %d)\n", unread, important);
+
+        unsigned char state = get_led_state ();
+
+        state = set_led (state, color_unread, unread);
+        state = set_led (state, color_important, important);
+
+        set_led_state (state);
 }
+
 
 static GtkWidget *plugin_config_frame(PurplePlugin *plugin) {
 	GtkWidget *frame;
-	GtkWidget *vbox;
+	GtkWidget *vbox, *vbox2;
 	GtkSizeGroup *sg;
 	GtkWidget *dd;
 
@@ -157,30 +235,72 @@ static GtkWidget *plugin_config_frame(PurplePlugin *plugin) {
 	                        NULL);
 	gtk_size_group_add_widget(sg, dd);
 
+        vbox2 = pidgin_make_frame(frame, "Important contacts...");
+	sg = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
+
+	dd = pidgin_prefs_dropdown(vbox2, "LED:",
+	                           PURPLE_PREF_STRING,
+	                           "/plugins/gtk/ftdi-hwnotify/led-imp",
+	                           "None", "none",
+	                           "Blue", "blue",
+	                           "Red", "red",
+	                           "Green", "green",
+	                           NULL);
+	gtk_size_group_add_widget(sg, dd);
+        pidgin_prefs_labeled_entry (vbox2, "Contacts:", "/plugins/gtk/ftdi-hwnotify/contacts-imp", sg);
+
 	gtk_widget_show_all(frame);
 	return frame;
 }
 
 static void init_plugin(PurplePlugin *plugin) {
-	purple_prefs_add_none("/plugins/gtk/gtk-simom-lednot");
-	purple_prefs_add_string("/plugins/gtk/gtk-simom-lednot/im", "always");
-	purple_prefs_add_string("/plugins/gtk/gtk-simom-lednot/chat", "nick");
-	purple_prefs_add_string("/plugins/gtk/gtk-simom-lednot/filename",
-	                        "/proc/acpi/asus/mled");
+	purple_prefs_add_none("/plugins/gtk/ftdi-hwnotify");
+	purple_prefs_add_string("/plugins/gtk/ftdi-hwnotify/led-one", "blue");
+	purple_prefs_add_string("/plugins/gtk/ftdi-hwnotify/im", "always");
+	purple_prefs_add_string("/plugins/gtk/ftdi-hwnotify/chat", "always");
+	purple_prefs_add_string("/plugins/gtk/ftdi-hwnotify/led-imp", "red");
+	purple_prefs_add_string("/plugins/gtk/ftdi-hwnotify/contacts-imp", "boss,boss2");
 }
 
 static gboolean plugin_load(PurplePlugin *plugin) {
-	purple_signal_connect(purple_conversations_get_handle(),
-	                      "conversation-updated", plugin,
-	                      PURPLE_CALLBACK(lednot_conversation_updated), NULL);
-	return TRUE;
+    // read settings
+    const char* one = purple_prefs_get_string("/plugins/gtk/ftdi-hwnotify/led-one");
+    const char* imp = purple_prefs_get_string("/plugins/gtk/ftdi-hwnotify/led-imp");
+
+    color_unread = str2color (one);
+    color_important = str2color (imp);
+
+    // init ftdi
+    ftdi_ok = FALSE;
+
+    if (ftdi_init (&ctx) >= 0) {
+        int f = ftdi_usb_open (&ctx, 0x0403, 0x6001);
+
+        if (f >= 0 || f == -5) {
+            ftdi_set_bitmode (&ctx, 0xFF, BITMODE_BITBANG);
+            ftdi_ok = TRUE;
+            set_led_state (0);
+        }
+    }
+
+
+    purple_signal_connect(purple_conversations_get_handle(),
+                          "conversation-updated", plugin,
+                          PURPLE_CALLBACK(hwnotify_conversation_updated), NULL);
+
+    return TRUE;
 }
 
 static gboolean plugin_unload(PurplePlugin *plugin) {
-	led_set(FALSE); /* Turn the led off */
-	purple_signal_disconnect(purple_conversations_get_handle(),
-	                         "conversation-updated", plugin,
-	                         PURPLE_CALLBACK(lednot_conversation_updated));
+    purple_signal_disconnect(purple_conversations_get_handle(),
+                             "conversation-updated", plugin,
+                             PURPLE_CALLBACK(hwnotify_conversation_updated));
+
+    if (ftdi_ok) {
+        ftdi_usb_close (&ctx);
+        ftdi_deinit (&ctx);
+    }
+
     return TRUE;
 }
 

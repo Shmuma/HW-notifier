@@ -7,7 +7,7 @@ GTK_PREFIX=/usr/local
 GTK_PREFIX2=/usr
 
 CFLAGS= -O0 -Wall -fpic -g
-LDFLAGS= -shared
+LDFLAGS= -shared -O0 -g
 
 INCLUDES = \
       -I$(GTK_PREFIX)/include \
@@ -27,7 +27,7 @@ INCLUDES = \
       $(GTK_PIDGIN_INCLUDES)
 
 hwnotify.so: hwnotify.c
-	gcc hwnotify.c $(CFLAGS) $(INCLUDES) $(LDFLAGS) -o hwnotify.so
+	gcc hwnotify.c $(CFLAGS) $(INCLUDES) $(LDFLAGS) -o hwnotify.so -lftdi
 
 install: hwnotify.so
 	cp hwnotify.so ~/.purple/plugins/
