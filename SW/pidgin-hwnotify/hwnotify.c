@@ -51,9 +51,10 @@ typedef enum {
 led_color color_unread = LED_NONE;
 led_color color_important = LED_NONE;
 
-
 gboolean ftdi_ok = FALSE;
 struct ftdi_context ctx;
+
+GList* important_list;
 
 
 led_color str2color (const char* str)
@@ -122,6 +123,20 @@ unsigned char set_led (unsigned char buf, led_color color, gboolean state)
 }
 
 
+gboolean is_important (const char* username)
+{
+    GList *p = important_list;
+
+    while (p) {
+        if (strstr (username, (const char*)p->data))
+            return TRUE;
+        p = p->next;
+    }
+
+    return FALSE;
+}
+
+
 void get_pending_events(gboolean* unread, gboolean* important) {
 	const char *im=purple_prefs_get_string("/plugins/gtk/ftdi-hwnotify/im");
 	const char *chat=purple_prefs_get_string("/plugins/gtk/ftdi-hwnotify/chat");
@@ -141,17 +156,6 @@ void get_pending_events(gboolean* unread, gboolean* important) {
 		                                             TRUE, 1);
 	}
 
-        // check for important contacts: TODO
-        if (l_im != NULL) {
-            GList* p = l_im;
-
-            while (p != NULL) {
-                PurpleConversation* conv = (PurpleConversation*)p->data;
-                purple_debug_info ("hwnotify", "acc: %s\n", conv->account->username);
-                p = p->next;
-            }
-        }
-
         // check for chat
 	if (chat != NULL && strcmp(chat, "always") == 0) {
 		l_chat = pidgin_conversations_find_unseen_list(PURPLE_CONV_TYPE_CHAT,
@@ -163,14 +167,54 @@ void get_pending_events(gboolean* unread, gboolean* important) {
 		                                               FALSE, 1);
 	}
 
+        gboolean unimportant = FALSE;
+
+        // check for important contacts
+        if (l_im != NULL && color_important != LED_NONE) {
+            GList* p = l_im;
+
+            while (p != NULL) {
+                PurpleConversation* conv = (PurpleConversation*)p->data;
+                if (is_important (conv->account->username))
+                    *important = TRUE;
+                else
+                    unimportant = TRUE;
+                p = p->next;
+            }
+        }
+
+        if (!*important)
+            unimportant = TRUE;
+
         if (l_im != NULL || l_chat != NULL)
-            *unread = TRUE;
+            *unread = unimportant;
 
         if (l_im != NULL)
             g_list_free (l_im);
 
         if (l_chat != NULL)
             g_list_free (l_chat);
+}
+
+
+static GList* parse_important_list (const char* data)
+{
+    const char *p = data, *pp;
+    GList* res = NULL;
+
+    while (p != NULL) {
+        pp = strchr (p, ',');
+        if (pp != NULL) {
+            res = g_list_append (res, strndup (p, pp-p));
+            pp++;
+            purple_debug_info ("hwnotify", "important: %s, %s\n", p, pp);
+        }
+        else
+            res = g_list_append (res, strdup (p));
+        p = pp;
+    }
+
+    return res;
 }
 
 
@@ -283,6 +327,7 @@ static gboolean plugin_load(PurplePlugin *plugin) {
         }
     }
 
+    important_list = parse_important_list (purple_prefs_get_string ("/plugins/gtk/ftdi-hwnotify/contacts-imp"));
 
     purple_signal_connect(purple_conversations_get_handle(),
                           "conversation-updated", plugin,
@@ -300,6 +345,9 @@ static gboolean plugin_unload(PurplePlugin *plugin) {
         ftdi_usb_close (&ctx);
         ftdi_deinit (&ctx);
     }
+
+    if (important_list)
+        g_list_free_full (important_list, free);
 
     return TRUE;
 }
