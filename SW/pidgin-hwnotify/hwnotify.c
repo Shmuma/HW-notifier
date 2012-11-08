@@ -39,6 +39,7 @@
 #include "gtkplugin.h"
 #include "gtkblist.h"
 
+void init_hw ();
 
 typedef enum {
     LED_NONE,
@@ -77,7 +78,13 @@ unsigned char get_led_state ()
 {
     unsigned char buf;
 
-    ftdi_read_data (&ctx, &buf, 1);
+    if (!ftdi_ok)
+        return 0;
+    if (ftdi_read_data (&ctx, &buf, 1) < 0) {
+        init_hw ();
+        if (ftdi_ok)
+            ftdi_read_data (&ctx, &buf, 1);
+    }
 
     return buf;
 }
@@ -85,7 +92,13 @@ unsigned char get_led_state ()
 
 void set_led_state (unsigned char state)
 {
-    ftdi_write_data (&ctx, &state, 1);   
+    if (!ftdi_ok)
+        return;
+    if (ftdi_write_data (&ctx, &state, 1) < 0) {
+        init_hw ();
+        if (ftdi_ok)
+            ftdi_write_data (&ctx, &state, 1);
+    }
 }
 
 
@@ -134,6 +147,22 @@ gboolean is_important (const char* username)
     }
 
     return FALSE;
+}
+
+
+void init_hw ()
+{
+    ftdi_ok = FALSE;
+
+    if (ftdi_init (&ctx) >= 0) {
+        int f = ftdi_usb_open (&ctx, 0x0403, 0x6001);
+
+        if (f >= 0 || f == -5) {
+            ftdi_set_bitmode (&ctx, 0xFF, BITMODE_BITBANG);
+            ftdi_ok = TRUE;
+            set_led_state (0);
+        }
+    }
 }
 
 
@@ -315,17 +344,7 @@ static gboolean plugin_load(PurplePlugin *plugin) {
     color_important = str2color (imp);
 
     // init ftdi
-    ftdi_ok = FALSE;
-
-    if (ftdi_init (&ctx) >= 0) {
-        int f = ftdi_usb_open (&ctx, 0x0403, 0x6001);
-
-        if (f >= 0 || f == -5) {
-            ftdi_set_bitmode (&ctx, 0xFF, BITMODE_BITBANG);
-            ftdi_ok = TRUE;
-            set_led_state (0);
-        }
-    }
+    init_hw ();
 
     important_list = parse_important_list (purple_prefs_get_string ("/plugins/gtk/ftdi-hwnotify/contacts-imp"));
 
