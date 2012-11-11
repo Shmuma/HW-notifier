@@ -46,6 +46,7 @@ int main (int argc, char** argv)
             printf ("Vendor %X, product %X\n", ee_str.vendor_id, ee_str.product_id);
             printf ("Manufacturer '%s', product '%s'\n", ee_str.manufacturer, ee_str.product);
             printf ("Pull down on suspend: %d\n", ee_str.suspend_pull_downs);
+            printf ("Wake up on RI#: %d\n", ee_str.remote_wakeup);
 
             if (write_mode) {
                 printf ("Perform EEPROM update: pull down on suspend and product string\n");

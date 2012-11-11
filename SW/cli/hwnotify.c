@@ -72,7 +72,7 @@ int main (int argc, char** argv)
     }
 
     // enable bitbang
-    ftdi_set_bitmode (&ctx, 0xFF, BITMODE_BITBANG);
+    ftdi_set_bitmode (&ctx, INVERT_TXD | INVERT_DSR | INVERT_DCD, BITMODE_BITBANG);
 
     // parse options
     if (parse_options (argc, argv, &red, &green, &blue)) {
