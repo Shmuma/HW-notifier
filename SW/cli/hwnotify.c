@@ -72,13 +72,12 @@ int main (int argc, char** argv)
     }
 
     // enable bitbang
-    ftdi_set_bitmode (&ctx, INVERT_TXD | INVERT_DSR | INVERT_DCD, BITMODE_BITBANG);
+    ftdi_set_bitmode (&ctx, 0xFF, BITMODE_BITBANG);
 
     // parse options
     if (parse_options (argc, argv, &red, &green, &blue)) {
         // read current state first
-        ftdi_read_data (&ctx, &buf, 1);
-
+        ftdi_read_pins (&ctx, &buf);
         // set colors
         handle_bit (0, red, &buf);
         handle_bit (5, green, &buf);

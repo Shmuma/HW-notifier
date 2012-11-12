@@ -80,10 +80,10 @@ unsigned char get_led_state ()
 
     if (!ftdi_ok)
         return 0;
-    if (ftdi_read_data (&ctx, &buf, 1) < 0) {
+    if (ftdi_read_pins (&ctx, &buf) < 0) {
         init_hw ();
         if (ftdi_ok)
-            ftdi_read_data (&ctx, &buf, 1);
+            ftdi_read_pins (&ctx, &buf);
     }
 
     return buf;
@@ -158,9 +158,10 @@ void init_hw ()
         int f = ftdi_usb_open (&ctx, 0x0403, 0x6001);
 
         if (f >= 0 || f == -5) {
+            purple_debug_info ("hwnotify", "INIT OK\n");
+
             ftdi_set_bitmode (&ctx, 0xFF, BITMODE_BITBANG);
             ftdi_ok = TRUE;
-            set_led_state (0);
         }
     }
 }
@@ -236,7 +237,6 @@ static GList* parse_important_list (const char* data)
         if (pp != NULL) {
             res = g_list_append (res, strndup (p, pp-p));
             pp++;
-            purple_debug_info ("hwnotify", "important: %s, %s\n", p, pp);
         }
         else
             res = g_list_append (res, strdup (p));
@@ -256,14 +256,9 @@ static void hwnotify_conversation_updated(PurpleConversation *conv,
         gboolean unread, important;
 
 	get_pending_events (&unread, &important);
-
-        purple_debug_info ("hwnotify", "pending_events (%d, %d)\n", unread, important);
-
         unsigned char state = get_led_state ();
-
         state = set_led (state, color_unread, unread);
         state = set_led (state, color_important, important);
-
         set_led_state (state);
 }
 
